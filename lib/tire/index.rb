@@ -128,6 +128,7 @@ module Tire
         if document.respond_to?(:to_hash) && hash = document.to_hash
           meta = {}
           meta[:_version]   = hash.delete(:_version)
+          meta[:_version_type]   = hash.delete(:_version_type)
           meta[:_routing]   = hash.delete(:_routing)
           meta[:_percolate] = hash.delete(:_percolate)
           meta[:_parent]    = hash.delete(:_parent)
