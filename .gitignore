@@ -12,3 +12,8 @@ examples/*.html
 .rvmrc
 .rbenv-version
 tmp/
+.idea/
+.bundle/
+bundle/
+*.iml
+bin/
