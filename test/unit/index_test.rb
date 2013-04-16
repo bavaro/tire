@@ -1,3 +1,5 @@
+# encoding: UTF-8
+
 require 'test_helper'
 
 module Tire
@@ -170,7 +172,7 @@ module Tire
                                             }
         end
 
-        should "return the mapping" do
+        should "return the mapping as a Hash" do
           json =<<-JSON
           {
             "dummy" : {
@@ -187,6 +189,33 @@ module Tire
 
           assert_equal 'string', @index.mapping['article']['properties']['title']['type']
           assert_equal 2.0,      @index.mapping['article']['properties']['title']['boost']
+        end
+
+        should "update the mapping" do
+          Configuration.client.expects(:put).returns(mock_response('{"ok":true,"acknowledged":true}', 200))
+          assert @index.mapping( 'document', { :properties => { :body => { :type => 'string', :analyzer => 'english'} } } )
+        end
+
+        should "fail to update the mapping when conflicts occur" do
+          Configuration.client.expects(:put).returns(mock_response('{"error":"MergeMappingException","status":400}', 400))
+          assert ! @index.mapping( 'document', { :properties => { :body => { :type => 'string', :analyzer => 'english'} } } )
+        end
+
+        should "raise an exception for the bang method" do
+          Configuration.client.expects(:put).returns(mock_response('{"error":"MergeMappingException","status":400}', 400))
+          assert_raise(RuntimeError) do
+            @index.mapping!("blah", {})
+          end
+        end
+
+        should "delete the mapping" do
+          Configuration.client.expects(:delete).returns(mock_response('{"ok":true}', 200))
+          assert @index.delete_mapping('document')
+        end
+
+        should "fail when deleting the mapping for non-existing type" do
+          Configuration.client.expects(:delete).returns(mock_response('{"error":"TypeMissingException[[dummy] type[document] missing]","status":404}', 400))
+          assert ! @index.delete_mapping('document')
         end
 
       end
@@ -308,10 +337,12 @@ module Tire
 
         context "document with ID" do
 
-          should "store Hash it under its ID property" do
-            Configuration.client.expects(:post).with("#{@index.url}/document/123",
-                                                     MultiJson.encode({:id => 123, :title => 'Test'})).
-                                                returns(mock_response('{"ok":true,"_id":"123"}'))
+          should "store a Hash under its ID property" do
+            Configuration.client.expects(:post).with do |path, json|
+              assert_equal "#{@index.url}/document/123", path
+              assert_equal 123, MultiJson.load(json)['id']
+            end.returns(mock_response('{"ok":true,"_id":"123"}'))
+
             @index.store :id => 123, :title => 'Test'
           end
 
@@ -339,6 +370,16 @@ module Tire
             assert_equal 'one', @index.get_id_from_document(document_1)
             assert_equal 1,     @index.get_id_from_document(document_2)
             assert_equal 'c',   @index.get_id_from_document(document_3)
+          end
+
+          should "escape the ID in URL" do
+            Configuration.client.expects(:post).with do |url, payload|
+              assert_equal "#{@index.url}/document/%C3%A4ccent", url
+              assert_equal 'äccent', MultiJson.load(payload)['id']
+            end.
+            returns(mock_response('{"ok":true,"_id":"äccent"}'))
+
+            @index.store :id => 'äccent'
           end
 
         end
@@ -397,6 +438,13 @@ module Tire
           assert_raise ArgumentError do
             @index.retrieve 'article', nil
           end
+        end
+
+        should "escape the ID in URL" do
+          Configuration.client.expects(:get).with("#{@index.url}/document/%C3%A4ccent").
+                                             returns(mock_response('{"_id":"äccent"}'))
+
+          @index.retrieve 'document', 'äccent'
         end
 
         should "properly encode document type" do
@@ -477,6 +525,13 @@ module Tire
           end
         end
 
+        should "escape the ID in URL" do
+          Configuration.client.expects(:delete).with("#{@index.url}/document/%C3%A4ccent").
+                                                returns(mock_response('{"ok":true,"_id":"äccent"}'))
+
+          @index.remove 'document', 'äccent'
+        end
+
         should "properly encode document type" do
           Configuration.client.expects(:delete).with("#{@index.url}/my_namespace%2Fmy_model/id-1").
                                              returns(mock_response('{"_id":"id-1","_version":1, "_source" : {"title":"Test"}}'))
@@ -531,6 +586,15 @@ module Tire
         should "raise error when no type or ID is passed" do
           assert_raise(ArgumentError) { @index.update('article', nil, :script => 'foobar') }
           assert_raise(ArgumentError) { @index.update(nil, '123', :script => 'foobar') }
+        end
+
+        should "escape the ID in URL" do
+          Configuration.client.expects(:post).with do |url,payload|
+                                assert_equal( "#{@index.url}/document/%C3%A4ccent/_update", url )
+                              end.
+                              returns(mock_response('{"ok":"true","_id":"äccent","_version":"2"}'))
+
+          assert @index.update('document', 'äccent', {:doc => {:foo => 'bar'}})
         end
 
         should "raise an error when no script or partial document is passed" do

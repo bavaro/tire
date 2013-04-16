@@ -54,9 +54,64 @@ module Tire
       alias_name ? Alias.all(@name).select { |a| a.name == alias_name }.first : Alias.all(@name)
     end
 
-    def mapping
+    # Get or update the index mapping
+    #
+    # Without arguments, returns the index mapping as a Hash
+    #
+    # When passed arguments, attempts to update the index mapping:
+    #
+    #     index.mapping 'article', properties: { body: { type: "string" } }
+    #
+    # You can pass the `ignore_conflicts` option as a part of the Hash:
+    #
+    #     index.mapping 'article', properties: { body: { type: "string" } }, ignore_conflicts: true
+    #
+    def mapping(*args)
+      args.empty? ? get_mapping : put_mapping(*args)
+    end
+
+    # Raises an exception for unsuccessful responses
+    #
+    def mapping!(*args)
+      mapping(*args)
+      raise RuntimeError, response.body unless response.success?
+    end
+
+    def get_mapping
       @response = Configuration.client.get("#{url}/_mapping")
-      MultiJson.decode(@response.body)[@name]
+      result = MultiJson.decode(@response.body)[@name]
+      @response.success? ? result : false
+    ensure
+      curl = %Q|curl -X GET "#{url}/_mapping?pretty"|
+      logged("GET MAPPING", curl)
+    end
+
+    def put_mapping(type, mapping)
+      params = {}
+      if ignore_conflicts = mapping.delete(:ignore_conflicts) || mapping.delete("ignore_conflicts")
+        params[:ignore_conflicts] = ignore_conflicts
+      end
+
+      url  = "#{self.url}/#{type}/_mapping"
+      url += "?#{params.to_param}" unless params.empty?
+
+      payload = { type => mapping }.to_json
+
+      @response = Configuration.client.put url, payload
+      result = MultiJson.decode(@response.body)
+      @response.success? ? result : false
+    ensure
+      curl = %Q|curl -X PUT "#{url}" -d '#{payload}'|
+      logged("PUT MAPPING #{type}", curl)
+    end
+
+    def delete_mapping(type)
+      url = "#{self.url}/#{type}"
+      @response = Configuration.client.delete(url)
+      @response.success?
+    ensure
+      curl = %Q|curl -X DELETE "#{url}"|
+      logged("DELETE MAPPING #{type}", curl)
     end
 
     def settings
@@ -85,7 +140,7 @@ module Tire
 
       params_encoded = params.empty? ? '' : "?#{params.to_param}"
 
-      url  = id ? "#{self.url}/#{type}/#{id}#{params_encoded}" : "#{self.url}/#{type}/#{params_encoded}"
+      url  = id ? "#{self.url}/#{type}/#{Utils.escape(id)}#{params_encoded}" : "#{self.url}/#{type}/#{params_encoded}"
 
       @response = Configuration.client.post url, document
       MultiJson.decode(@response.body)
@@ -189,12 +244,13 @@ module Tire
       case
         when method = options.delete(:method)
           options = {:page => 1, :per_page => 1000}.merge options
-          while documents = klass_or_collection.send(method.to_sym, options.merge(:page => options[:page])) \
-                            and documents.to_a.length > 0
+          while (documents = klass_or_collection.send(method.to_sym, options.merge(:page => options[:page]))) \
+                            && documents.to_a.length > 0
 
             documents = yield documents if block_given?
 
             bulk_store documents, options
+            GC.start
             options[:page] += 1
           end
 
@@ -203,8 +259,8 @@ module Tire
           bulk_store documents, options
 
         else
-          raise ArgumentError, "Please pass either an Enumerable compatible class, or a collection object" +
-                               "with a method for fetching records in batches (such as 'paginate')"
+          raise ArgumentError, "Please pass either an Enumerable compatible class, or a collection object " +
+                               "with a method for fetching records in batches (such as 'paginate')."
       end
     end
 
@@ -238,20 +294,19 @@ module Tire
       end
       raise ArgumentError, "Please pass a document ID" unless id
 
-      url    = "#{self.url}/#{type}/#{id}"
+      url    = "#{self.url}/#{type}/#{Utils.escape(id)}"
       result = Configuration.client.delete url
       MultiJson.decode(result.body) if result.success?
 
     ensure
       curl = %Q|curl -X DELETE "#{url}"|
-      logged(id, curl)
+      logged("#{type}/#{id}", curl)
     end
 
     def retrieve(type, id, options={})
       raise ArgumentError, "Please pass a document ID" unless id
 
-      type      = Utils.escape(type)
-      url       = "#{self.url}/#{type}/#{id}"
+      url       = "#{self.url}/#{Utils.escape(type)}/#{Utils.escape(id)}"
 
       params    = {}
       params[:routing]    = options[:routing] if options[:routing]
@@ -273,7 +328,7 @@ module Tire
 
     ensure
       curl = %Q|curl -X GET "#{url}"|
-      logged(id, curl)
+      logged("#{type}/#{id}", curl)
     end
 
     def update(type, id, payload={}, options={})
@@ -282,7 +337,7 @@ module Tire
       raise ArgumentError, "Please pass a script or partial document in the payload hash" unless payload[:script] || payload[:doc]
 
       type      = Utils.escape(type)
-      url       = "#{self.url}/#{type}/#{id}/_update"
+      url       = "#{self.url}/#{type}/#{Utils.escape(id)}/_update"
       url      += "?#{options.to_param}" unless options.keys.empty?
       @response = Configuration.client.post url, MultiJson.encode(payload)
       MultiJson.decode(@response.body)

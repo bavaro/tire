@@ -5,29 +5,27 @@ module Tire
       Configuration.class_eval(&block)
     end
 
-    def search(indices=nil, options={}, &block)
+    def search(indices=nil, payload={}, &block)
       if block_given?
-        Search::Search.new(indices, options, &block)
+        Search::Search.new(indices, payload, &block)
       else
-        payload = case options
-          when Hash    then
-            options
-          when String  then
-            Tire.warn "Passing the payload as a JSON string in Tire.search has been deprecated, " +
-                       "please use the block syntax or pass a plain Hash."
-            options
-          else raise ArgumentError, "Please pass a Ruby Hash or String with JSON"
+        raise ArgumentError, "Please pass a Ruby Hash or an object with `to_hash` method, not #{payload.class}" \
+              unless payload.respond_to?(:to_hash)
+
+        # Extract URL parameters from payload
+        #
+        search_params = %w| search_type routing scroll from size timeout |
+
+        options = search_params.inject({}) do |sum,item|
+          if param = (payload.delete(item) || payload.delete(item.to_sym))
+            sum[item.to_sym] = param
+          end
+          sum
         end
-        unless options.empty?
-          Search::Search.new(indices, :payload => payload)
-        else
-          Search::Search.new(indices)
-        end
+
+        options.update(:payload => payload) unless payload.empty?
+        Search::Search.new(indices, options)
       end
-    rescue Exception => error
-      STDERR.puts "[REQUEST FAILED] #{error.class} #{error.message rescue nil}\n"
-      raise
-    ensure
     end
 
     # Build and perform a [multi-search](http://elasticsearch.org/guide/reference/api/multi-search.html)

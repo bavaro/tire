@@ -20,7 +20,7 @@ module Tire
 
       def terms(field, value, options={})
         @value = { :terms => { field => value } }
-        @value[:terms].update( { :minimum_match => options[:minimum_match] } ) if options[:minimum_match]
+        @value[:terms].update(options)
         @value
       end
 
@@ -54,6 +54,10 @@ module Tire
         @value[:custom_score] = options
         @value[:custom_score].update({:query => @custom_score.to_hash})
         @value
+      end
+
+      def constant_score(&block)
+        @value.update( { :constant_score => ConstantScoreQuery.new(&block).to_hash } ) if block_given?
       end
 
       def fuzzy(field, value, options={})
@@ -179,6 +183,29 @@ module Tire
 
       def to_json(options={})
         to_hash.to_json
+      end
+    end
+
+    class ConstantScoreQuery
+      def initialize(&block)
+        @value = {}
+        block.arity < 1 ? self.instance_eval(&block) : block.call(self) if block_given?
+      end
+
+      def filter(type, *options)
+        @value.update(:filter => Filter.new(type, *options).to_hash)
+      end
+
+      def query(&block)
+        @value.update(:query => Query.new(&block).to_hash)
+      end
+
+      def boost(boost)
+        @value.update(:boost => boost)
+      end
+
+      def to_hash
+        @value
       end
     end
 
